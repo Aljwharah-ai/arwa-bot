@@ -2,8 +2,8 @@ import type { BotConfig, ChatMessage } from "./types";
 import { ARWA_LOOK } from "./personality";
 
 const CHAT_URL = "https://api.x.ai/v1/chat/completions";
-const RESPONSES_URL = "https://api.x.ai/v1/responses";
 const IMAGE_URL = "https://api.x.ai/v1/images/generations";
+const MODEL = (process.env.XAI_MODEL || "grok-4.5").trim();
 
 function apiKey(): string | undefined {
   return process.env.XAI_API_KEY?.trim() || undefined;
@@ -19,61 +19,6 @@ type GrokContent =
       | { type: "text"; text: string }
       | { type: "image_url"; image_url: { url: string } }
     >;
-
-function textFromResponses(json: unknown): string {
-  const body = json as {
-    output_text?: string;
-    output?: Array<{
-      content?: Array<{ type?: string; text?: string }>;
-    }>;
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  if (body.output_text?.trim()) return body.output_text.trim();
-  const parts: string[] = [];
-  for (const item of body.output ?? []) {
-    for (const c of item.content ?? []) {
-      if (c.text) parts.push(c.text);
-    }
-  }
-  if (parts.length) return parts.join("\n").trim();
-  return body.choices?.[0]?.message?.content?.trim() || "";
-}
-
-async function grokWithSearch(opts: {
-  key: string;
-  system: string;
-  history: ChatMessage[];
-  userText: string;
-  temperature: number;
-  maxTokens: number;
-}): Promise<string | null> {
-  const input: Array<{ role: string; content: string }> = [
-    { role: "system", content: opts.system },
-  ];
-  for (const m of opts.history.slice(-18)) {
-    input.push({ role: m.role, content: m.content });
-  }
-  input.push({ role: "user", content: opts.userText });
-
-  const res = await fetch(RESPONSES_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.key}`,
-    },
-    body: JSON.stringify({
-      model: "grok-4.5",
-      input,
-      tools: [{ type: "web_search" }],
-      temperature: opts.temperature,
-      max_output_tokens: opts.maxTokens,
-    }),
-  });
-  if (!res.ok) return null;
-  const json = await res.json();
-  const text = textFromResponses(json);
-  return text || null;
-}
 
 export async function grokChat(opts: {
   system: string;
@@ -91,9 +36,8 @@ export async function grokChat(opts: {
     { role: "system", content: opts.system },
   ];
 
-  const recent = opts.history.slice(-18);
-  for (const m of recent) {
-    messages.push({ role: m.role, content: m.content });
+  for (const m of opts.history.slice(-8)) {
+    messages.push({ role: m.role, content: m.content.slice(0, 800) });
   }
 
   if (opts.imageDataUrl) {
@@ -109,30 +53,7 @@ export async function grokChat(opts: {
   }
 
   const thinking = opts.config.thinking;
-  const maxTokens = thinking === "fast" ? 420 : thinking === "deep" ? 1100 : 700;
-  const temperature = thinking === "fast" ? 0.92 : thinking === "deep" ? 0.8 : 0.9;
-
-  if (opts.config.searchMode !== "off" && !opts.imageDataUrl) {
-    const searched = await grokWithSearch({
-      key,
-      system: opts.system,
-      history: opts.history,
-      userText: opts.userText,
-      temperature,
-      maxTokens,
-    });
-    if (searched) return searched;
-  }
-
-  const body: Record<string, unknown> = {
-    model: "grok-4.5",
-    messages,
-    temperature,
-    max_tokens: maxTokens,
-  };
-
-  if (thinking === "deep") body.reasoning_effort = "high";
-  else if (thinking === "fast") body.reasoning_effort = "low";
+  const maxTokens = thinking === "fast" ? 220 : thinking === "deep" ? 500 : 320;
 
   const res = await fetch(CHAT_URL, {
     method: "POST",
@@ -140,7 +61,13 @@ export async function grokChat(opts: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: MODEL,
+      messages,
+      max_tokens: maxTokens,
+      reasoning_effort: thinking === "deep" ? "high" : "low",
+    }),
+    signal: AbortSignal.timeout(12_000),
   });
 
   if (!res.ok) {
@@ -175,6 +102,7 @@ export async function grokImage(prompt: string, selfPortrait: boolean, look?: st
       n: 1,
       response_format: "b64_json",
     }),
+    signal: AbortSignal.timeout(20_000),
   });
 
   if (!res.ok) {

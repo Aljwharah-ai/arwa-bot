@@ -3,7 +3,8 @@ import { ARWA_LOOK } from "./personality";
 
 const CHAT_URL = "https://api.x.ai/v1/chat/completions";
 const IMAGE_URL = "https://api.x.ai/v1/images/generations";
-const MODEL = (process.env.XAI_MODEL || "grok-4.5").trim();
+const MODEL = (process.env.XAI_MODEL || "grok-4-fast").trim();
+const FAST = /fast|mini|lite/i.test(MODEL);
 
 function apiKey(): string | undefined {
   return (
@@ -36,11 +37,11 @@ export async function grokChat(opts: {
   if (!key) throw new Error("XAI_API_KEY missing");
 
   const messages: { role: string; content: GrokContent }[] = [
-    { role: "system", content: opts.system.slice(0, 1200) },
+    { role: "system", content: opts.system.slice(0, FAST ? 800 : 1200) },
   ];
 
-  for (const m of opts.history.slice(-2)) {
-    messages.push({ role: m.role, content: m.content.slice(0, 180) });
+  for (const m of opts.history.slice(FAST ? -1 : -2)) {
+    messages.push({ role: m.role, content: m.content.slice(0, FAST ? 120 : 180) });
   }
 
   if (opts.imageDataUrl) {
@@ -55,19 +56,21 @@ export async function grokChat(opts: {
     messages.push({ role: "user", content: opts.userText });
   }
 
+  const body: Record<string, unknown> = {
+    model: MODEL,
+    messages,
+    max_tokens: FAST ? 90 : 120,
+  };
+  if (!FAST) body.reasoning_effort = "low";
+
   const res = await fetch(CHAT_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
     },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      max_tokens: 120,
-      reasoning_effort: "low",
-    }),
-    signal: AbortSignal.timeout(20_000),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(FAST ? 10_000 : 16_000),
   });
 
   const raw = await res.text();
@@ -101,7 +104,7 @@ export async function grokImage(prompt: string, selfPortrait: boolean, look?: st
       n: 1,
       response_format: "b64_json",
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(20000),
   });
 
   if (!res.ok) {

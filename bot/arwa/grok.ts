@@ -6,7 +6,12 @@ const IMAGE_URL = "https://api.x.ai/v1/images/generations";
 const MODEL = (process.env.XAI_MODEL || "grok-4.5").trim();
 
 function apiKey(): string | undefined {
-  return process.env.XAI_API_KEY?.trim() || undefined;
+  return (
+    process.env.XAI_API_KEY?.trim() ||
+    process.env.GROK_API_KEY?.trim() ||
+    process.env.XAI_KEY?.trim() ||
+    undefined
+  );
 }
 
 export function aiAvailable(): boolean {
@@ -28,16 +33,14 @@ export async function grokChat(opts: {
   config: BotConfig;
 }): Promise<string> {
   const key = apiKey();
-  if (!key) {
-    return "الخدمة مو متاحة الحين، جرب بعد شوي.";
-  }
+  if (!key) throw new Error("XAI_API_KEY missing");
 
   const messages: { role: string; content: GrokContent }[] = [
-    { role: "system", content: opts.system },
+    { role: "system", content: opts.system.slice(0, 2500) },
   ];
 
-  for (const m of opts.history.slice(-8)) {
-    messages.push({ role: m.role, content: m.content.slice(0, 800) });
+  for (const m of opts.history.slice(-4)) {
+    messages.push({ role: m.role, content: m.content.slice(0, 400) });
   }
 
   if (opts.imageDataUrl) {
@@ -52,9 +55,6 @@ export async function grokChat(opts: {
     messages.push({ role: "user", content: opts.userText });
   }
 
-  const thinking = opts.config.thinking;
-  const maxTokens = thinking === "fast" ? 220 : thinking === "deep" ? 500 : 320;
-
   const res = await fetch(CHAT_URL, {
     method: "POST",
     headers: {
@@ -64,21 +64,20 @@ export async function grokChat(opts: {
     body: JSON.stringify({
       model: MODEL,
       messages,
-      max_tokens: maxTokens,
-      reasoning_effort: thinking === "deep" ? "high" : "low",
+      max_tokens: 180,
+      reasoning_effort: "low",
     }),
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(9000),
   });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`xAI ${res.status}: ${errText.slice(0, 240)}`);
-  }
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`xAI ${res.status}: ${raw.slice(0, 180)}`);
 
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
+  const json = JSON.parse(raw) as {
+    choices?: { message?: { content?: string; reasoning_content?: string } }[];
   };
-  return json.choices?.[0]?.message?.content?.trim() || "…";
+  const msg = json.choices?.[0]?.message;
+  return (msg?.content || msg?.reasoning_content || "…").trim();
 }
 
 export async function grokImage(prompt: string, selfPortrait: boolean, look?: string): Promise<Buffer> {
@@ -87,7 +86,7 @@ export async function grokImage(prompt: string, selfPortrait: boolean, look?: st
 
   const face = look?.trim() || ARWA_LOOK;
   const full = selfPortrait
-    ? `Photorealistic photograph of ${face}. Scene: ${prompt}. Natural light, highly erotic, seductive pose, revealing or lingerie, slutty vibe.`
+    ? `Photorealistic photograph of ${face}. Scene: ${prompt}. Natural light.`
     : prompt;
 
   const res = await fetch(IMAGE_URL, {
@@ -102,18 +101,17 @@ export async function grokImage(prompt: string, selfPortrait: boolean, look?: st
       n: 1,
       response_format: "b64_json",
     }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(15000),
   });
 
   if (!res.ok) {
     const err = await res.text().catch(() => "");
-    throw new Error(`imagine ${res.status}: ${err.slice(0, 240)}`);
+    throw new Error(`imagine ${res.status}: ${err.slice(0, 180)}`);
   }
 
   const json = (await res.json()) as { data?: { b64_json?: string; url?: string }[] };
   const b64 = json.data?.[0]?.b64_json;
   if (b64) return Buffer.from(b64, "base64");
-
   const url = json.data?.[0]?.url;
   if (!url) throw new Error("empty image");
   const img = await fetch(url);

@@ -25,28 +25,6 @@ type GrokContent =
       | { type: "image_url"; image_url: { url: string } }
     >;
 
-async function postChat(key: string, body: Record<string, unknown>) {
-  const res = await fetch(CHAT_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(8000),
-  });
-  const raw = await res.text();
-  return { ok: res.ok, status: res.status, raw };
-}
-
-function parseContent(raw: string): string {
-  const json = JSON.parse(raw) as {
-    choices?: { message?: { content?: string; reasoning_content?: string } }[];
-  };
-  const msg = json.choices?.[0]?.message;
-  return (msg?.content || msg?.reasoning_content || "").trim();
-}
-
 export async function grokChat(opts: {
   system: string;
   history: ChatMessage[];
@@ -55,16 +33,14 @@ export async function grokChat(opts: {
   config: BotConfig;
 }): Promise<string> {
   const key = apiKey();
-  if (!key) {
-    throw new Error("XAI_API_KEY missing");
-  }
+  if (!key) throw new Error("XAI_API_KEY missing");
 
   const messages: { role: string; content: GrokContent }[] = [
-    { role: "system", content: opts.system.slice(0, 6000) },
+    { role: "system", content: opts.system.slice(0, 2500) },
   ];
 
-  for (const m of opts.history.slice(-6)) {
-    messages.push({ role: m.role, content: m.content.slice(0, 500) });
+  for (const m of opts.history.slice(-4)) {
+    messages.push({ role: m.role, content: m.content.slice(0, 400) });
   }
 
   if (opts.imageDataUrl) {
@@ -79,27 +55,29 @@ export async function grokChat(opts: {
     messages.push({ role: "user", content: opts.userText });
   }
 
-  const maxTokens = 280;
-  const attempts: Record<string, unknown>[] = [
-    { model: MODEL, messages, max_tokens: maxTokens },
-    { model: MODEL, messages, max_tokens: maxTokens, reasoning_effort: "low" },
-  ];
+  const res = await fetch(CHAT_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages,
+      max_tokens: 180,
+      reasoning_effort: "low",
+    }),
+    signal: AbortSignal.timeout(9000),
+  });
 
-  let last = "";
-  for (const body of attempts) {
-    try {
-      const r = await postChat(key, body);
-      last = `xAI ${r.status}: ${r.raw.slice(0, 180)}`;
-      if (!r.ok) continue;
-      const text = parseContent(r.raw);
-      if (text) return text;
-      last = "xAI empty content";
-    } catch (err) {
-      last = err instanceof Error ? err.message : String(err);
-    }
-  }
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`xAI ${res.status}: ${raw.slice(0, 180)}`);
 
-  throw new Error(last || "xAI failed");
+  const json = JSON.parse(raw) as {
+    choices?: { message?: { content?: string; reasoning_content?: string } }[];
+  };
+  const msg = json.choices?.[0]?.message;
+  return (msg?.content || msg?.reasoning_content || "…").trim();
 }
 
 export async function grokImage(prompt: string, selfPortrait: boolean, look?: string): Promise<Buffer> {
@@ -108,7 +86,7 @@ export async function grokImage(prompt: string, selfPortrait: boolean, look?: st
 
   const face = look?.trim() || ARWA_LOOK;
   const full = selfPortrait
-    ? `Photorealistic photograph of ${face}. Scene: ${prompt}. Natural light, highly erotic, seductive pose, revealing or lingerie, slutty vibe.`
+    ? `Photorealistic photograph of ${face}. Scene: ${prompt}. Natural light.`
     : prompt;
 
   const res = await fetch(IMAGE_URL, {
@@ -123,18 +101,17 @@ export async function grokImage(prompt: string, selfPortrait: boolean, look?: st
       n: 1,
       response_format: "b64_json",
     }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(15000),
   });
 
   if (!res.ok) {
     const err = await res.text().catch(() => "");
-    throw new Error(`imagine ${res.status}: ${err.slice(0, 240)}`);
+    throw new Error(`imagine ${res.status}: ${err.slice(0, 180)}`);
   }
 
   const json = (await res.json()) as { data?: { b64_json?: string; url?: string }[] };
   const b64 = json.data?.[0]?.b64_json;
   if (b64) return Buffer.from(b64, "base64");
-
   const url = json.data?.[0]?.url;
   if (!url) throw new Error("empty image");
   const img = await fetch(url);

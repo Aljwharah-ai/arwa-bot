@@ -79,7 +79,7 @@ export async function chatWithArwa(opts: {
   const config = getConfig();
   console.log("[arwa] brain", config.updatedAt, (config.instructions || "").slice(0, 80));
   const isOwner = Boolean(opts.isOwner) || opts.telegramId === OWNER_ID || opts.userId === String(OWNER_ID);
-  let user = rollDaily(getUser(opts.userId));
+  const user = rollDaily(getUser(opts.userId));
 
   if (opts.name && !user.name) user.name = opts.name;
   if (opts.username) user.username = opts.username;

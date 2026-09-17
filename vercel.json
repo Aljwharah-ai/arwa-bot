@@ -1,4 +1,9 @@
 {
   "framework": null,
-  "rewrites": []
+  "rewrites": [],
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 60
+    }
+  }
 }

@@ -21,20 +21,29 @@ function projectRoot(): string {
   return "/tmp/arwa-root";
 }
 
+function writableRoot(): string {
+  return process.env.VERCEL ? "/tmp/arwa-root" : projectRoot();
+}
+
 function dataDir(): string {
-  const preferred = path.join(projectRoot(), "data");
+  const preferred = path.join(writableRoot(), "data");
   fs.mkdirSync(path.join(preferred, "users"), { recursive: true });
   return preferred;
 }
 
 export function photoDir(): string {
-  const dir = path.join(projectRoot(), "public", PHOTO_DIR_NAME);
+  const packed = path.join(projectRoot(), "public", PHOTO_DIR_NAME);
+  if (!process.env.VERCEL) {
+    fs.mkdirSync(packed, { recursive: true });
+    return packed;
+  }
+  const dir = path.join(writableRoot(), "public", PHOTO_DIR_NAME);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 export function generatedDir(): string {
-  const dir = path.join(projectRoot(), "public", PHOTO_DIR_NAME, "generated");
+  const dir = path.join(photoDir(), "generated");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -62,10 +71,14 @@ function readJson<T>(file: string, fallback: T): T {
 }
 
 function writeJson(file: string, value: unknown) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
-  fs.renameSync(tmp, file);
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    console.error("[arwa] write", file, err);
+  }
 }
 
 const STARTER_PHOTOS: PhotoMeta[] = [
@@ -260,7 +273,7 @@ export function listUsers(): UserRecord[] {
       if (f.endsWith(".json")) ids.add(f.replace(/\.json$/, ""));
     }
   } catch {
-    /* */
+    /* ignore */
   }
   return [...ids].map((id) => getUser(id)).sort((a, b) => b.lastSeen - a.lastSeen);
 }

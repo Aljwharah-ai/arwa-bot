@@ -36,11 +36,11 @@ export async function grokChat(opts: {
   if (!key) throw new Error("XAI_API_KEY missing");
 
   const messages: { role: string; content: GrokContent }[] = [
-    { role: "system", content: opts.system.slice(0, 2500) },
+    { role: "system", content: opts.system.slice(0, 1200) },
   ];
 
-  for (const m of opts.history.slice(-4)) {
-    messages.push({ role: m.role, content: m.content.slice(0, 400) });
+  for (const m of opts.history.slice(-2)) {
+    messages.push({ role: m.role, content: m.content.slice(0, 180) });
   }
 
   if (opts.imageDataUrl) {
@@ -64,10 +64,10 @@ export async function grokChat(opts: {
     body: JSON.stringify({
       model: MODEL,
       messages,
-      max_tokens: 180,
+      max_tokens: 120,
       reasoning_effort: "low",
     }),
-    signal: AbortSignal.timeout(9000),
+    signal: AbortSignal.timeout(20_000),
   });
 
   const raw = await res.text();
